@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>EduManage — QR Attendance (Full)</title>
+
+  <!-- QR libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8"></script>
+  <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+
+  <!-- Firebase (compat version for simpler integration) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    /* Minimal but usable UI */
+    * { box-sizing: border-box; }
+    body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial; margin:0; background:#f3f4f6; color:#111827; }
+    .wrap { max-width:980px; margin:18px auto; padding:18px; }
+    .card { background:white; border-radius:10px; padding:16px; box-shadow:0 6px 18px rgba(15,23,42,0.06); margin-bottom:14px; }
+    h1,h2 { margin:0 0 10px 0; }
+    p.small { margin:0 0 10px 0; color:#6b7280; font-size:14px; }
+    label { font-weight:700; display:block; margin-bottom:6px; color:#374151; }
+    input, select, textarea, button { padding:10px 12px; border-radius:8px; border:1px solid #e6edf3; font-size:14px; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .actions { display:flex; gap:10px; margin-top:10px; flex-wrap:wrap; }
+    .btn { background:linear-gradient(135deg,#667eea,#764ba2); color:#fff; border:none; padding:10px 14px; border-radius:8px; cursor:pointer; font-weight:700; }
+    .btn.ghost { background:#f8fafc; color:#374151; border:1px solid #e5e7eb; }
+    #qrcode { display:flex; align-items:center; justify-content:center; padding:12px; min-height:120px; background:#f8fafc; border-radius:8px; margin-top:10px; }
+    #reader { width:100%; max-width:600px; margin:12px auto; background:#f8fafc; padding:8px; border-radius:8px; overflow:hidden; }
+    .status { margin-top:12px; padding:10px; border-radius:8px; font-weight:700; }
+    .status.wait { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; }
+    .status.ok { background:#d1fae5; color:#065f46; border:1px solid #10b981; }
+    .status.err { background:#fee2e2; color:#991b1b; border:1px solid #ef4444; }
+    .file-row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+    .table-wrap { overflow-x:auto; margin-top:12px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { padding:8px 10px; border:1px solid #e6edf3; text-align:left; font-size:13px; }
+    thead th { background:#f8fafc; }
+    @media (max-width:800px) { .row { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>EduManage — QR Attendance</h1>
+      <p class="small">Generator + Scanner + Upload + Geo check (20m default) + Firestore optional. Serve from HTTPS or http://localhost.</p>
+    </div>
+
+    <!-- Generator -->
+    <div class="card" id="generatorCard">
+      <h2>QR Generator</h2>
+      <div class="row">
+        <div>
+          <label for="studentId">Student ID *</label>
+          <input id="studentId" placeholder="STU001" />
+        </div>
+        <div>
+          <label for="studentName">Student Name *</label>
+          <input id="studentName" placeholder="John Doe" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label for="studentClass">Class</label>
+          <input id="studentClass" placeholder="Class-10" />
+        </div>
+        <div>
+          <label for="studentSection">Section</label>
+          <input id="studentSection" placeholder="A" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label for="additionalInfo">Additional Info</label>
+        <textarea id="additionalInfo" rows="2" placeholder="Emergency contact / notes"></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="generateBtn">Generate QR</button>
+        <button class="btn ghost" id="clearQrBtn">Clear</button>
+        <a id="downloadLink" style="display:none;" class="btn ghost" download>Download PNG</a>
+      </div>
+
+      <div id="qrcode"></div>
+    </div>
+
+    <!-- Scanner -->
+    <div class="card" id="scannerCard">
+      <h2>Attendance Scanner</h2>
+      <p class="small">Scan QR using camera or upload an image. Device location is required. Attendance marked <strong>Present</strong> only if within allowed radius (default 20m).</p>
+
+      <div class="row">
+        <div>
+          <label for="schoolLat">School Latitude</label>
+          <input id="schoolLat" type="number" step="any" value="26.8467" />
+        </div>
+        <div>
+          <label for="schoolLng">School Longitude</label>
+          <input id="schoolLng" type="number" step="any" value="80.9462" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label for="allowedRadius">Allowed Radius (meters)</label>
+        <input id="allowedRadius" type="number" value="20" min="1" />
+      </div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button class="btn" id="startScanner">Start Camera Scanner</button>
+        <button class="btn ghost" id="stopScanner" style="display:none;">Stop Scanner</button>
+        <button class="btn ghost" id="testGeo">Test Geo</button>
+      </div>
+
+      <div id="reader"></div>
+
+      <div class="file-row">
+        <input type="file" id="uploadImage" accept="image/*" />
+        <button class="btn ghost" id="processUpload">Process Uploaded Image</button>
+        <div class="small">If camera fails, upload a clear photo of the QR.</div>
+      </div>
+
+      <div id="status" class="status wait">Status: Idle — start scanner or upload image.</div>
+    </div>
+
+    <!-- Reports -->
+    <div class="card">
+      <h2>Reports</h2>
+      <div class="actions">
+        <button class="btn" id="showReport">Show Records</button>
+        <button class="btn ghost" id="downloadCsv" style="display:none;">Download CSV</button>
+        <button class="btn ghost" id="clearLocal">Clear Local Records</button>
+      </div>
+      <div id="reportArea"></div>
+    </div>
+  </div>
+
+  <script>
+  /*****************************************************************
+   * Full integrated single-file app
+   * - QR Generator (qrcodejs)
+   * - Camera Scanner (html5-qrcode)
+   * - Upload image processing (html5-qrcode.scanFileV2 or jsQR fallback)
+   * - Geolocation check (Haversine) with default 20m threshold
+   * - Firestore optional (replace firebaseConfig below)
+   *
+   * Important:
+   * - Serve page over HTTPS or use http://localhost (camera & geolocation need secure context)
+   *****************************************************************/
+
+  // -------------------------------
+  // Firebase config (replace with yours)
+  // -------------------------------
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+  };
+
+  let firestore = null;
+  try {
+    if (firebaseConfig && firebaseConfig.apiKey && firebaseConfig.projectId) {
+      firebase.initializeApp(firebaseConfig);
+      firestore = firebase.firestore();
+      console.log('Firestore enabled.');
+    } else {
+      console.warn('Firebase config not provided — running without Firestore. Replace firebaseConfig to enable.');
+    }
+  } catch (e) {
+    console.warn('Firebase init issue (continuing without Firestore).', e);
+  }
+
+  // -------------------------------
+  // Utilities
+  // -------------------------------
+  function escapeHtml(s) {
+    if (s === undefined || s === null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(Δφ/2)*Math.sin(Δφ/2) + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)*Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  function getCurrentPosition(timeout=10000) {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+      let timedOut = false;
+      const t = setTimeout(() => { timedOut = true; reject(new Error('Timeout')); }, timeout);
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (timedOut) return;
+        clearTimeout(t);
+        resolve(pos);
+      }, err => {
+        if (timedOut) return;
+        clearTimeout(t);
+        reject(err);
+      }, { enableHighAccuracy:true, maximumAge:3000 });
+    });
+  }
+
+  // -------------------------------
+  // In-memory records (local)
+  // -------------------------------
+  let attendanceRecords = [];
+
+  function saveRecord(record) {
+    attendanceRecords.push(record);
+    // push to firestore if enabled
+    if (firestore) {
+      firestore.collection('attendance').add(record)
+        .then(() => console.log('Saved to Firestore'))
+        .catch(e => console.error('Failed to save to Firestore', e));
+    }
+    document.getElementById('downloadCsv').style.display = attendanceRecords.length ? 'inline-block' : 'none';
+  }
+
+  // -------------------------------
+  // QR Generator
+  // -------------------------------
+  document.getElementById('generateBtn').addEventListener('click', () => {
+    const id = document.getElementById('studentId').value.trim();
+    const name = document.getElementById('studentName').value.trim();
+    if (!id || !name) { alert('Enter Student ID and Name'); return; }
+
+    const payload = {
+      studentId: id,
+      name: name,
+      class: document.getElementById('studentClass').value.trim() || '',
+      section: document.getElementById('studentSection').value.trim() || '',
+      info: document.getElementById('additionalInfo').value.trim() || '',
+      generatedAt: new Date().toISOString(),
+      school: 'EduManage School'
+    };
+
+    const container = document.getElementById('qrcode');
+    container.innerHTML = '';
+    try {
+      new QRCode(container, {
+        text: JSON.stringify(payload),
+        width: 260,
+        height: 260,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      // show download link if canvas available
+      setTimeout(() => {
+        const canvas = container.querySelector('canvas');
+        const dl = document.getElementById('downloadLink');
+        if (canvas) {
+          const url = canvas.toDataURL('image/png');
+          dl.href = url;
+          dl.download = `QR_${id}_${(name||'').replace(/\s+/g,'_')}.png`;
+          dl.style.display = 'inline-block';
+          dl.innerText = 'Download PNG';
+        }
+      }, 200);
+    } catch (e) {
+      container.innerText = 'QR generation error';
+      console.error(e);
+    }
+  });
+
+  document.getElementById('clearQrBtn').addEventListener('click', () => {
+    document.getElementById('qrcode').innerHTML = '';
+    const dl = document.getElementById('downloadLink');
+    dl.style.display = 'none';
+  });
+
+  // -------------------------------
+  // Scanner + upload handling
+  // -------------------------------
+  let html5QrCode = null;
+  let scannerActive = false;
+  let lastScanAt = 0;
+
+  function setStatus(text, cls='wait') {
+    const s = document.getElementById('status');
+    s.className = 'status ' + (cls === 'ok' ? 'ok' : (cls === 'err' ? 'err' : 'wait'));
+    s.innerHTML = text;
+  }
+
+  document.getElementById('startScanner').addEventListener('click', startCamera);
+  document.getElementById('stopScanner').addEventListener('click', stopCamera);
+  document.getElementById('processUpload').addEventListener('click', processUpload);
+  document.getElementById('testGeo').addEventListener('click', async () => {
+    setStatus('Checking location...', 'wait');
+    try {
+      const p = await getCurrentPosition(10000);
+      setStatus(`Device location: ${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}`, 'ok');
+    } catch (e) {
+      setStatus('Cannot acquire location (permission/timeout).', 'err');
+    }
+  });
+
+  async function startCamera() {
+    if (scannerActive) return;
+    setStatus('Starting camera... allow permission if prompted', 'wait');
+    try {
+      if (!html5QrCode) html5QrCode = new Html5Qrcode("reader", { verbose:false });
+      const config = { fps: 15, qrbox: { width: 280, height: 280 } };
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        (decodedText, decodedResult) => {
+          const now = Date.now();
+          if (now - lastScanAt < 1500) return;
+          lastScanAt = now;
+          handleDecoded(decodedText);
+        },
+        (err) => {
+          // ignore frame errors
+        }
+      );
+      scannerActive = true;
+      document.getElementById('startScanner').style.display = 'none';
+      document.getElementById('stopScanner').style.display = 'inline-block';
+      setStatus('Camera ready — point at QR code.', 'ok');
+    } catch (e) {
+      console.error('Camera start failed', e);
+      setStatus('Camera not available or permission denied. Use upload if needed.', 'err');
+    }
+  }
+
+  async function stopCamera() {
+    if (html5QrCode && scannerActive) {
+      try {
+        await html5QrCode.stop();
+        try { html5QrCode.clear(); } catch(e) {}
+      } catch (e) {}
+    }
+    scannerActive = false;
+    document.getElementById('startScanner').style.display = 'inline-block';
+    document.getElementById('stopScanner').style.display = 'none';
+    setStatus('Scanner stopped', 'wait');
+  }
+
+  async function handleDecoded(decodedText) {
+    setStatus('QR scanned — verifying location & payload...', 'wait');
+
+    let payload;
+    try { payload = JSON.parse(decodedText); } catch (e) { payload = { studentId: decodedText }; }
+
+    // get allowed radius
+    const allowed = parseInt(document.getElementById('allowedRadius').value) || 20;
+    const schoolLat = parseFloat(document.getElementById('schoolLat').value) || 26.8467;
+    const schoolLng = parseFloat(document.getElementById('schoolLng').value) || 80.9462;
+
+    try {
+      const pos = await getCurrentPosition(10000);
+      const lat = pos.coords.latitude, lng = pos.coords.longitude;
+      const dist = Math.round(getDistanceMeters(lat, lng, schoolLat, schoolLng));
+
+      if (dist <= allowed) {
+        setStatus(`✅ Present — ${escapeHtml(payload.studentId||'Unknown')} (${escapeHtml(payload.name||'')}) — ${dist} m`, 'ok');
+        const rec = {
+          studentId: payload.studentId || String(Date.now()),
+          name: payload.name || '',
+          class: payload.class || '',
+          section: payload.section || '',
+          timestamp: new Date().toISOString(),
+          location: { lat, lng },
+          distance: dist,
+          status: 'present'
+        };
+        saveRecord(rec);
+      } else {
+        setStatus(`❌ Outside range (${dist} m). Marked Absent`, 'err');
+        const rec = {
+          studentId: payload.studentId || String(Date.now()),
+          name: payload.name || '',
+          class: payload.class || '',
+          section: payload.section || '',
+          timestamp: new Date().toISOString(),
+          location: { lat, lng },
+          distance: dist,
+          status: 'absent'
+        };
+        saveRecord(rec);
+      }
+    } catch (e) {
+      console.error('Location error', e);
+      setStatus('❌ Could not get device location. Marked Absent.', 'err');
+      const rec = {
+        studentId: payload.studentId || String(Date.now()),
+        name: payload.name || '',
+        class: payload.class || '',
+        section: payload.section || '',
+        timestamp: new Date().toISOString(),
+        location: null,
+        distance: null,
+        status: 'absent'
+      };
+      saveRecord(rec);
+    }
+  }
+
+  // Upload processing using html5-qrcode.scanFileV2 if available, else jsQR fallback
+  async function processUpload() {
+    const fileInput = document.getElementById('uploadImage');
+    if (!fileInput.files || fileInput.files.length === 0) {
+      alert('Select an image with QR code first.');
+      return;
+    }
+    const file = fileInput.files[0];
+
+    // stop camera to avoid resource conflict
+    if (scannerActive) await stopCamera();
+
+    setStatus('Processing uploaded image...', 'wait');
+
+    // attempt scanFileV2
+    try {
+      if (!html5QrCode) html5QrCode = new Html5Qrcode("reader", { verbose:false });
+      if (typeof html5QrCode.scanFileV2 === 'function') {
+        try {
+          const result = await html5QrCode.scanFileV2(file, false);
+          if (result && result.decodedText) {
+            handleDecoded(result.decodedText);
+            return;
+          }
+        } catch (e) {
+          console.debug('scanFileV2 no result / failed', e);
+        }
+      }
+    } catch (e) {
+      console.debug('scanFileV2 not available', e);
+    }
+
+    // fallback to jsQR
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const img = new Image();
+      img.src = dataUrl;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        let w = img.width, h = img.height;
+        const maxDim = 1200;
+        let scale = 1;
+        if (Math.max(w,h) > maxDim) scale = maxDim / Math.max(w,h);
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, canvas.width, canvas.height);
+        if (code && code.data) {
+          handleDecoded(code.data);
+        } else {
+          setStatus('❌ Could not detect QR in image. Try crop/clear photo.', 'err');
+        }
+      };
+      img.onerror = () => {
+        setStatus('❌ Failed to load image file.', 'err');
+      };
+    } catch (e) {
+      console.error('Upload processing error', e);
+      setStatus('❌ Error processing uploaded image.', 'err');
+    }
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = e => res(e.target.result);
+      fr.onerror = e => rej(e);
+      fr.readAsDataURL(file);
+    });
+  }
+
+  // -------------------------------
+  // Reports / CSV / Clear
+  // -------------------------------
+  document.getElementById('showReport').addEventListener('click', showReport);
+  document.getElementById('downloadCsv').addEventListener('click', downloadCsv);
+  document.getElementById('clearLocal').addEventListener('click', clearLocal);
+
+  function showReport() {
+    const area = document.getElementById('reportArea');
+    if (!attendanceRecords.length) {
+      area.innerHTML = '<div class="small">No records yet. Scan or upload QR to create attendance records.</div>';
+      document.getElementById('downloadCsv').style.display = 'none';
+      return;
+    }
+    let html = '<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Section</th><th>Time</th><th>Distance (m)</th><th>Status</th></tr></thead><tbody>';
+    attendanceRecords.forEach(r => {
+      html += `<tr>
+        <td>${escapeHtml(r.studentId||'')}</td>
+        <td>${escapeHtml(r.name||'')}</td>
+        <td>${escapeHtml(r.class||'')}</td>
+        <td>${escapeHtml(r.section||'')}</td>
+        <td>${escapeHtml(r.timestamp ? new Date(r.timestamp).toLocaleString() : '')}</td>
+        <td>${escapeHtml(r.distance != null ? String(r.distance) : '')}</td>
+        <td>${escapeHtml(r.status||'')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    area.innerHTML = html;
+    document.getElementById('downloadCsv').style.display = attendanceRecords.length ? 'inline-block' : 'none';
+  }
+
+  function convertToCsv(arr) {
+    if (!arr.length) return '';
+    const headers = ['studentId','name','class','section','timestamp','lat','lng','distance','status'];
+    const rows = arr.map(r => {
+      const lat = r.location && r.location.lat != null ? r.location.lat : '';
+      const lng = r.location && r.location.lng != null ? r.location.lng : '';
+      return [r.studentId||'', r.name||'', r.class||'', r.section||'', r.timestamp||'', lat, lng, r.distance != null ? r.distance : '', r.status||'']
+        .map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+    });
+    return headers.join(',') + '\n' + rows.join('\n');
+  }
+
+  function downloadCsv() {
+    const csv = convertToCsv(attendanceRecords);
+    if (!csv) { alert('No data'); return; }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `attendance_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function clearLocal() {
+    if (!confirm('Clear local attendance records? This will not delete Firestore data.')) return;
+    attendanceRecords = [];
+    showReport();
+    setStatus('Local records cleared', 'wait');
+    document.getElementById('downloadCsv').style.display = 'none';
+  }
+
+  // -------------------------------
+  // Helper: saveRecord wrapper (exposed earlier)
+  // -------------------------------
+  function saveRecord(record) {
+    attendanceRecords.push(record);
+    if (firestore) {
+      try {
+        firestore.collection('attendance').add(record).then(()=>console.log('Saved to Firestore')).catch(e=>console.error(e));
+      } catch(e) { console.error('Firestore save error', e); }
+    }
+    document.getElementById('downloadCsv').style.display = attendanceRecords.length ? 'inline-block' : 'none';
+  }
+
+  // init status
+  setStatus('Status: Idle — start scanner or upload image.', 'wait');
+
+  // ensure camera is stopped on page unload
+  window.addEventListener('beforeunload', async () => {
+    try { if (html5QrCode && scannerActive) await html5QrCode.stop(); } catch(e) {}
+  });
+
+  </script>
+</body>
+</html>
